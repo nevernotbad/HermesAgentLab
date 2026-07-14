@@ -133,7 +133,7 @@ function rawInstallScriptUrl(repository, commit, scriptName = installScriptName(
   return `https://raw.githubusercontent.com/${repository}/${commit}/scripts/${scriptName}`
 }
 
-const INSTALL_SCRIPT_DOWNLOAD_TIMEOUT_MS = 30_000
+const INSTALL_SCRIPT_DOWNLOAD_TIMEOUT_MS = 60_000
 
 function removePartialDownload(tmpPath) {
   try {

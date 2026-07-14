@@ -15,15 +15,15 @@ function git(args) {
   }).trim()
 }
 
-function downloadText(url, redirectsLeft = 2) {
+function downloadTextOnce(url, redirectsLeft = 2) {
   return new Promise((resolve, reject) => {
     const request = https.get(
       url,
-      { headers: { 'User-Agent': 'HermesAgentLab-release-preflight/1' }, timeout: 15_000 },
+      { headers: { 'User-Agent': 'HermesAgentLab-release-preflight/1' }, timeout: 60_000 },
       response => {
         if ([301, 302, 307, 308].includes(response.statusCode) && response.headers.location && redirectsLeft > 0) {
           response.resume()
-          resolve(downloadText(response.headers.location, redirectsLeft - 1))
+          resolve(downloadTextOnce(response.headers.location, redirectsLeft - 1))
           return
         }
         if (response.statusCode !== 200) {
@@ -45,6 +45,23 @@ function downloadText(url, redirectsLeft = 2) {
     request.on('timeout', () => request.destroy(new Error(`timeout fetching ${url}`)))
     request.on('error', reject)
   })
+}
+
+async function downloadText(url, attempts = 3) {
+  let lastError
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await downloadTextOnce(url)
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) {
+        console.warn(`[verify-install-source] retry ${attempt}/${attempts} after ${error.message}`)
+      }
+    }
+  }
+
+  throw lastError
 }
 
 async function main() {
