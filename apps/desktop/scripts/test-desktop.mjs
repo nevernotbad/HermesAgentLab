@@ -321,8 +321,8 @@ function validateBundle() {
   if (!stamp.commit || typeof stamp.commit !== 'string' || stamp.commit.length < 7) {
     die(`install-stamp.json is missing a usable commit field: ${JSON.stringify(stamp)}`)
   }
-  if (!stamp.branch || typeof stamp.branch !== 'string') {
-    die(`install-stamp.json is missing the branch field: ${JSON.stringify(stamp)}`)
+  if (stamp.branch !== null && typeof stamp.branch !== 'string') {
+    die(`install-stamp.json has an invalid branch field: ${JSON.stringify(stamp)}`)
   }
   if (!stamp.repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(stamp.repository)) {
     die(`install-stamp.json is missing a usable repository field: ${JSON.stringify(stamp)}`)
