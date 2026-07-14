@@ -120,6 +120,25 @@ function validatePortableMetadata(metadata, packageJson = desktopPackage) {
   }
 }
 
+function launcherEnv(extra = {}) {
+  const env = { ...process.env, ...extra }
+
+  delete env.ELECTRON_RUN_AS_NODE
+
+  return env
+}
+
+function waitForFile(file, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) return true
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250)
+  }
+
+  return fs.existsSync(file)
+}
+
 function main() {
   if (process.platform !== 'win32') throw new Error('Windows portable smoke test requires Windows')
 
@@ -160,7 +179,7 @@ function main() {
   try {
     const result = spawnSync(launcher, [], {
       cwd: launcherDir,
-      env: { ...process.env, HERMES_DESKTOP_PORTABLE_PROBE: probePath },
+      env: launcherEnv({ HERMES_DESKTOP_PORTABLE_PROBE: probePath }),
       encoding: 'utf8',
       timeout: 120_000,
       windowsHide: true
@@ -168,7 +187,7 @@ function main() {
 
     if (result.error) throw result.error
     if (result.status !== 0) throw new Error(`portable probe exited ${result.status}: ${result.stderr || result.stdout}`)
-    if (!fs.existsSync(probePath)) throw new Error('portable probe did not write its result')
+    if (!waitForFile(probePath)) throw new Error('portable probe did not write its result')
 
     assertProbe(JSON.parse(fs.readFileSync(probePath, 'utf8')), launcherDir)
 
