@@ -6,46 +6,30 @@ import { fileURLToPath } from 'node:url'
 import { listPackage } from '@electron/asar'
 
 import PACKAGE_JSON from '../package.json' with { type: 'json' }
+import { desktopProduct, packagedAppLayout, renderArtifactName } from './desktop-product.mjs'
 
 const MODE = process.argv[2] || 'help'
 const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64'
 const DESKTOP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const RELEASE_ROOT = path.join(DESKTOP_ROOT, 'release')
 const PLATFORM = process.platform
+const PRODUCT = desktopProduct(PACKAGE_JSON)
 
 // Platform-specific packaged-app layout. The thin installer ships an Electron
 // app shell plus extraResources (install-stamp.json + native-deps/) -- it
 // no longer bundles the Hermes Agent Python payload (that's fetched at first
 // launch via install.ps1 / install.sh, per the Phase 1 thin-installer flow).
 const APP = (() => {
-  if (PLATFORM === 'darwin') {
-    const appPath = path.join(RELEASE_ROOT, `mac-${ARCH}`, 'Hermes.app')
-    return {
-      appPath,
-      binary: path.join(appPath, 'Contents', 'MacOS', 'Hermes'),
-      resourcesPath: path.join(appPath, 'Contents', 'Resources'),
-      asarPath: path.join(appPath, 'Contents', 'Resources', 'app.asar'),
-      unpackedDistIndex: path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked', 'dist', 'index.html')
-    }
-  }
-  if (PLATFORM === 'win32') {
-    const unpacked = path.join(RELEASE_ROOT, 'win-unpacked')
-    return {
-      appPath: unpacked,
-      binary: path.join(unpacked, 'Hermes.exe'),
-      resourcesPath: path.join(unpacked, 'resources'),
-      asarPath: path.join(unpacked, 'resources', 'app.asar'),
-      unpackedDistIndex: path.join(unpacked, 'resources', 'app.asar.unpacked', 'dist', 'index.html')
-    }
-  }
-  // linux unpacked layout matches windows but with different binary name
-  const unpacked = path.join(RELEASE_ROOT, 'linux-unpacked')
+  const layout = packagedAppLayout({
+    desktopRoot: DESKTOP_ROOT,
+    packageJson: PACKAGE_JSON,
+    platform: PLATFORM,
+    arch: ARCH
+  })
   return {
-    appPath: unpacked,
-    binary: path.join(unpacked, 'hermes'),
-    resourcesPath: path.join(unpacked, 'resources'),
-    asarPath: path.join(unpacked, 'resources', 'app.asar'),
-    unpackedDistIndex: path.join(unpacked, 'resources', 'app.asar.unpacked', 'dist', 'index.html')
+    ...layout,
+    asarPath: path.join(layout.resourcesPath, 'app.asar'),
+    unpackedDistIndex: path.join(layout.resourcesPath, 'app.asar.unpacked', 'dist', 'index.html')
   }
 })()
 
@@ -124,11 +108,18 @@ function ensurePackagedApp() {
 }
 
 function resolveDmgPath() {
-  if (!exists(RELEASE_ROOT)) {
-    return path.join(RELEASE_ROOT, `Hermes-${PACKAGE_JSON.version}-${ARCH}.dmg`)
-  }
+  const expected = path.join(
+    RELEASE_ROOT,
+    renderArtifactName(PRODUCT.artifactName, {
+      version: PACKAGE_JSON.version,
+      os: 'mac',
+      arch: ARCH,
+      ext: 'dmg'
+    })
+  )
+  if (!exists(RELEASE_ROOT) || exists(expected)) return expected
 
-  const prefix = `Hermes-${PACKAGE_JSON.version}`
+  const prefix = `${PRODUCT.productName}-${PACKAGE_JSON.version}-mac-`
   const candidates = fs
     .readdirSync(RELEASE_ROOT)
     .filter(name => name.endsWith('.dmg'))
@@ -142,15 +133,25 @@ function resolveDmgPath() {
 
   return candidates.length > 0
     ? path.join(RELEASE_ROOT, candidates[0])
-    : path.join(RELEASE_ROOT, `Hermes-${PACKAGE_JSON.version}-${ARCH}.dmg`)
+    : expected
 }
 
 function resolveNsisPath() {
-  // electron-builder NSIS artifactName template is 'Hermes-${version}-${os}-${arch}.${ext}'
+  const expected = path.join(
+    RELEASE_ROOT,
+    renderArtifactName(PRODUCT.artifactName, {
+      version: PACKAGE_JSON.version,
+      os: 'win',
+      arch: ARCH,
+      ext: 'exe'
+    })
+  )
+  if (exists(expected)) return expected
   if (!exists(RELEASE_ROOT)) return null
+  const prefix = `${PRODUCT.productName}-${PACKAGE_JSON.version}-win-`
   const candidates = fs
     .readdirSync(RELEASE_ROOT)
-    .filter(name => /\.exe$/i.test(name) && /win/i.test(name))
+    .filter(name => name.endsWith('.exe') && name.startsWith(prefix))
     .sort((a, b) => {
       const aMtime = fs.statSync(path.join(RELEASE_ROOT, a)).mtimeMs
       const bMtime = fs.statSync(path.join(RELEASE_ROOT, b)).mtimeMs
@@ -323,6 +324,9 @@ function validateBundle() {
   if (!stamp.branch || typeof stamp.branch !== 'string') {
     die(`install-stamp.json is missing the branch field: ${JSON.stringify(stamp)}`)
   }
+  if (!stamp.repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(stamp.repository)) {
+    die(`install-stamp.json is missing a usable repository field: ${JSON.stringify(stamp)}`)
+  }
 
   // Positive assertion: node-pty native deps shipped
   const native = expectedNativeDepPaths()
@@ -400,11 +404,13 @@ function printArtifacts(options = {}) {
 
 function help() {
   console.log(`Usage:
-  npm run test:desktop:existing  # build packaged app, launch with normal PATH/existing Hermes
+  npm run test:desktop:existing  # build packaged app, launch with normal PATH/existing hermes runtime
   npm run test:desktop:fresh     # build packaged app, launch with temp userData + HERMES_HOME
   npm run test:desktop:dmg       # (macOS only) build DMG and open it
   npm run test:desktop:nsis      # (win32 only) build NSIS installer
   npm run test:desktop:all       # build installer, validate app payload, print paths
+  npm run test:desktop:bundle    # validate existing app + installer without rebuilding or launching
+  npm run test:desktop:app-bundle # validate only the existing packaged app without requiring an installer
 
 Fast rerun (skip rebuild if the packaged app already exists):
   HERMES_DESKTOP_SKIP_BUILD=1 npm run test:desktop:fresh
@@ -437,6 +443,16 @@ if (MODE === 'existing') {
   } else {
     ensurePackagedApp()
   }
+  printArtifacts(validateBundle())
+} else if (MODE === 'bundle') {
+  if (PLATFORM === 'darwin' && !exists(resolveDmgPath())) {
+    die(`Missing DMG: ${resolveDmgPath()}`)
+  }
+  if (PLATFORM === 'win32' && !resolveNsisPath()) {
+    die(`Missing NSIS installer for ${PRODUCT.productName} ${PACKAGE_JSON.version}`)
+  }
+  printArtifacts(validateBundle())
+} else if (MODE === 'app-bundle') {
   printArtifacts(validateBundle())
 } else {
   help()

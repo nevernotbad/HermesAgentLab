@@ -11,6 +11,7 @@
  *     "schemaVersion": 1,
  *     "commit":        "<40-char SHA>",
  *     "branch":        "<branch name>",
+ *     "repository":    "<GitHub owner/repo>",
  *     "builtAt":       "<ISO 8601 UTC timestamp>",
  *     "dirty":         true|false,
  *     "source":        "ci" | "local"
@@ -37,6 +38,14 @@ const REPO_ROOT = resolve(DESKTOP_ROOT, "..", "..")
 const OUT_DIR = join(DESKTOP_ROOT, "build")
 const OUT_FILE = join(OUT_DIR, "install-stamp.json")
 
+function normalizeGitHubRepository(value) {
+  if (!value) return null
+  const raw = String(value).trim().replace(/^git\+/, "")
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) return raw.replace(/\.git$/i, "")
+  const match = raw.match(/github\.com[/:]([^/]+)\/([^/#]+?)(?:\.git)?$/i)
+  return match ? `${match[1]}/${match[2].replace(/\.git$/i, "")}` : null
+}
+
 function tryExec(cmd, opts) {
   try {
     return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], ...opts }).trim()
@@ -52,6 +61,9 @@ function fromCI() {
   return {
     commit: sha,
     branch: branch,
+    repository:
+      normalizeGitHubRepository(process.env.HERMES_BUILD_REPOSITORY) ||
+      normalizeGitHubRepository(process.env.GITHUB_REPOSITORY),
     dirty: false, // CI builds from a checkout-of-ref by definition
     source: "ci"
   }
@@ -68,10 +80,14 @@ function fromLocalGit() {
   // tracked-but-modified files because those mean the .exe content
   // differs from the commit being pinned.
   const status = tryExec("git status --porcelain -uno", { cwd: REPO_ROOT })
+  const repository =
+    normalizeGitHubRepository(process.env.HERMES_BUILD_REPOSITORY) ||
+    normalizeGitHubRepository(tryExec("git remote get-url origin", { cwd: REPO_ROOT }))
   const dirty = status !== null && status.length > 0
   return {
     commit: sha,
     branch: branch === "HEAD" ? null : branch, // detached HEAD -> null
+    repository,
     dirty: dirty,
     source: "local"
   }
@@ -79,20 +95,30 @@ function fromLocalGit() {
 
 function main() {
   const stamp = fromCI() || fromLocalGit()
-  if (!stamp || !stamp.commit) {
+  if (stamp && !stamp.repository) {
+    stamp.repository = normalizeGitHubRepository(tryExec("git remote get-url origin", { cwd: REPO_ROOT }))
+  }
+  if (!stamp || !stamp.commit || !stamp.repository) {
     console.error(
       "[write-build-stamp] ERROR: could not determine git commit.\n" +
         "  - $GITHUB_SHA not set\n" +
         "  - `git rev-parse HEAD` failed at " +
         REPO_ROOT +
         "\n" +
-        "Packaged builds require a git ref to pin first-launch install.ps1\n" +
-        "against. Run from a git checkout or set $GITHUB_SHA explicitly."
+        "Packaged builds require both a git ref and a GitHub owner/repo to pin first-launch install scripts.\n" +
+        "Run from a git checkout with an origin remote, or set $GITHUB_SHA and $GITHUB_REPOSITORY."
     )
     process.exit(1)
   }
 
   if (stamp.dirty) {
+    if (process.env.HERMES_REQUIRE_CLEAN_BUILD === "1") {
+      console.error(
+        "[write-build-stamp] ERROR: release packaging requires a clean tracked worktree.\n" +
+          "Commit or stash tracked changes, then rerun `npm run desktop:package:win`."
+      )
+      process.exit(1)
+    }
     console.warn(
       "[write-build-stamp] WARNING: working tree is dirty.\n" +
         "  Pinning to " +
@@ -106,6 +132,7 @@ function main() {
     schemaVersion: STAMP_SCHEMA_VERSION,
     commit: stamp.commit,
     branch: stamp.branch,
+    repository: stamp.repository,
     builtAt: new Date().toISOString(),
     dirty: stamp.dirty,
     source: stamp.source
@@ -119,8 +146,11 @@ function main() {
       " -> " +
       stamp.commit.slice(0, 12) +
       (stamp.branch ? " (" + stamp.branch + ")" : "") +
+      " from " +
+      stamp.repository +
       (stamp.dirty ? " [DIRTY]" : "")
   )
 }
 
 main()
+

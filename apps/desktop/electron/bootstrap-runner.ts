@@ -49,6 +49,8 @@ function hiddenWindowsChildOptions(options = {}) {
 }
 
 const STAMP_COMMIT_RE = /^[0-9a-f]{7,40}$/i
+const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const DEFAULT_REPOSITORY = 'nevernotbad/HermesAgentLab'
 
 // Stages flagged needs_user_input=true in the manifest are skipped by the
 // runner (passed -NonInteractive to install.ps1, which the install script
@@ -107,93 +109,125 @@ function installedAgentInstallScript(hermesHome) {
   }
 }
 
-function cachedScriptPath(hermesHome, commit) {
-  return path.join(bootstrapCacheDir(hermesHome), `install-${commit}.${process.platform === 'win32' ? 'ps1' : 'sh'}`)
+function repositoryFromInstallStamp(installStamp) {
+  return installStamp && REPOSITORY_RE.test(String(installStamp.repository || ''))
+    ? String(installStamp.repository)
+    : DEFAULT_REPOSITORY
 }
 
-function downloadInstallScript(commit, destPath) {
+function cachedScriptPath(hermesHome, commit, repository = DEFAULT_REPOSITORY) {
+  const repositoryKey = String(repository).replace(/[^A-Za-z0-9._-]/g, '_')
+  return path.join(
+    bootstrapCacheDir(hermesHome),
+    `install-${repositoryKey}-${commit}.${process.platform === 'win32' ? 'ps1' : 'sh'}`
+  )
+}
+
+function rawInstallScriptUrl(repository, commit, scriptName = installScriptName()) {
+  if (!REPOSITORY_RE.test(String(repository || ''))) {
+    throw new Error(`Invalid GitHub repository slug in install stamp: ${repository}`)
+  }
+  if (!STAMP_COMMIT_RE.test(String(commit || ''))) {
+    throw new Error(`Invalid install-script commit: ${commit}`)
+  }
+  return `https://raw.githubusercontent.com/${repository}/${commit}/scripts/${scriptName}`
+}
+
+const INSTALL_SCRIPT_DOWNLOAD_TIMEOUT_MS = 30_000
+
+function removePartialDownload(tmpPath) {
+  try {
+    fs.unlinkSync(tmpPath)
+  } catch {
+    void 0
+  }
+}
+
+function armDownloadTimeout(request, url) {
+  request.setTimeout(INSTALL_SCRIPT_DOWNLOAD_TIMEOUT_MS, () => {
+    request.destroy(new Error(`Timed out downloading install script from ${url}`))
+  })
+  return request
+}
+
+function downloadInstallScript(commit, destPath, repository = DEFAULT_REPOSITORY) {
   // Fetch from GitHub raw at the pinned commit. The raw URL with a SHA
   // is immutable (unlike a branch ref), so we don't need integrity
   // verification beyond "did the file we wrote pass a syntax probe."
   const scriptName = installScriptName()
-  const url = `https://raw.githubusercontent.com/NousResearch/hermes-agent/${commit}/scripts/${scriptName}`
+  const url = rawInstallScriptUrl(repository, commit, scriptName)
 
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(destPath), { recursive: true })
     const tmpPath = destPath + '.tmp'
     const out = fs.createWriteStream(tmpPath)
-    https
-      .get(url, res => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          // GitHub raw shouldn't redirect for a SHA URL, but follow once
-          // defensively.
-          out.close()
-          fs.unlinkSync(tmpPath)
-          https
-            .get(res.headers.location, res2 => {
-              if (res2.statusCode !== 200) {
-                reject(
-                  new Error(
-                    `Failed to download ${scriptName}: HTTP ${res2.statusCode} from redirect ${res.headers.location}`
-                  )
-                )
+    const request = https.get(url, res => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        // GitHub raw shouldn't redirect for a SHA URL, but follow once
+        // defensively.
+        out.close()
+        fs.unlinkSync(tmpPath)
+        const redirectUrl = res.headers.location
 
-                return
-              }
-
-              const out2 = fs.createWriteStream(tmpPath)
-              res2.pipe(out2)
-              out2.on('finish', () => {
-                out2.close()
-                fs.renameSync(tmpPath, destPath)
-                resolve(destPath)
-              })
-              out2.on('error', reject)
-            })
-            .on('error', reject)
+        if (!redirectUrl) {
+          reject(new Error(`Failed to download ${scriptName}: redirect from ${url} had no Location header`))
 
           return
         }
 
-        if (res.statusCode !== 200) {
-          out.close()
+        const redirectRequest = https.get(redirectUrl, res2 => {
+          if (res2.statusCode !== 200) {
+            res2.resume()
+            reject(new Error(`Failed to download ${scriptName}: HTTP ${res2.statusCode} from redirect ${redirectUrl}`))
 
-          try {
-            fs.unlinkSync(tmpPath)
-          } catch {
-            void 0
+            return
           }
 
-          reject(new Error(`Failed to download ${scriptName}: HTTP ${res.statusCode} from ${url}`))
-
-          return
-        }
-
-        res.pipe(out)
-        out.on('finish', () => {
-          out.close()
-          fs.renameSync(tmpPath, destPath)
-          resolve(destPath)
+          const out2 = fs.createWriteStream(tmpPath)
+          res2.pipe(out2)
+          out2.on('finish', () => {
+            out2.close()
+            fs.renameSync(tmpPath, destPath)
+            resolve(destPath)
+          })
+          out2.on('error', err => {
+            removePartialDownload(tmpPath)
+            reject(err)
+          })
         })
-        out.on('error', err => {
-          try {
-            fs.unlinkSync(tmpPath)
-          } catch {
-            void 0
-          }
-
+        armDownloadTimeout(redirectRequest, redirectUrl).on('error', err => {
+          removePartialDownload(tmpPath)
           reject(err)
         })
-      })
-      .on('error', err => {
-        try {
-          fs.unlinkSync(tmpPath)
-        } catch {
-          void 0
-        }
 
+        return
+      }
+
+      if (res.statusCode !== 200) {
+        res.resume()
+        out.close()
+        removePartialDownload(tmpPath)
+
+        reject(new Error(`Failed to download ${scriptName}: HTTP ${res.statusCode} from ${url}`))
+
+        return
+      }
+
+      res.pipe(out)
+      out.on('finish', () => {
+        out.close()
+        fs.renameSync(tmpPath, destPath)
+        resolve(destPath)
+      })
+      out.on('error', err => {
+        removePartialDownload(tmpPath)
         reject(err)
       })
+    })
+    armDownloadTimeout(request, url).on('error', err => {
+      removePartialDownload(tmpPath)
+      reject(err)
+    })
   })
 }
 
@@ -223,7 +257,8 @@ async function resolveInstallScript({
     )
   }
 
-  const cached = cachedScriptPath(hermesHome, installStamp.commit)
+  const repository = repositoryFromInstallStamp(installStamp)
+  const cached = cachedScriptPath(hermesHome, installStamp.commit, repository)
 
   try {
     await fsp.access(cached, fs.constants.R_OK)
@@ -243,7 +278,7 @@ async function resolveInstallScript({
   })
 
   try {
-    await _download(installStamp.commit, cached)
+    await _download(installStamp.commit, cached, repository)
     emit({ type: 'log', line: `[bootstrap] saved to ${cached}` })
 
     return { path: cached, source: 'download', commit: installStamp.commit, kind: installScriptKind() }
@@ -293,7 +328,7 @@ function powershellUnderRoot(root) {
 // %SystemRoot%\System32\WindowsPowerShell\v1.0. On machines whose PATH was
 // trimmed, truncated, or stored as a non-expanding REG_SZ (so %SystemRoot%
 // never expands), that lookup fails and the spawn dies with ENOENT before
-// install.ps1 ever runs — the installer stalls at "0 of 0 steps". Resolve by
+// install.ps1 ever runs 鈥?the installer stalls at "0 of 0 steps". Resolve by
 // absolute path first, then fall back to PATH (powershell 5.1, then pwsh 7),
 // then a bare name as a last resort.
 function resolveWindowsPowerShell() {
@@ -535,6 +570,8 @@ function spawnBash(scriptPath, args, { emit, stageName, abortSignal, hermesHome 
 function buildPinArgs(installStamp) {
   const args = []
 
+  args.push('-RepoSlug', repositoryFromInstallStamp(installStamp))
+
   if (installStamp && installStamp.commit) {
     args.push('-Commit', installStamp.commit)
   }
@@ -547,7 +584,14 @@ function buildPinArgs(installStamp) {
 }
 
 function buildPosixPinArgs({ installStamp, activeRoot, hermesHome }) {
-  const args = ['--dir', activeRoot, '--hermes-home', hermesHome]
+  const args = [
+    '--dir',
+    activeRoot,
+    '--hermes-home',
+    hermesHome,
+    '--repo-slug',
+    repositoryFromInstallStamp(installStamp)
+  ]
 
   if (installStamp && installStamp.branch) {
     args.push('--branch', installStamp.branch)
@@ -728,7 +772,7 @@ async function runBootstrap(opts) {
     writeMarker // callback to write the bootstrap-complete marker; main.ts provides
   } = opts
 
-  // Bail before spawning anything if the user already cancelled — otherwise an
+  // Bail before spawning anything if the user already cancelled 鈥?otherwise an
   // already-aborted signal would still fetch the manifest (a spawn) before the
   // in-loop abort check fires.
   if (abortSignal && abortSignal.aborted) {
@@ -848,10 +892,14 @@ async function runBootstrap(opts) {
 
 export {
   cachedScriptPath,
+  DEFAULT_REPOSITORY,
   installedAgentInstallScript,
   // Exposed for testability
   parseStageResult,
+  rawInstallScriptUrl,
+  repositoryFromInstallStamp,
   resolveInstallScript,
   resolveLocalInstallScript,
   runBootstrap
 }
+

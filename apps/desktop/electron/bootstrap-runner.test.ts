@@ -4,13 +4,31 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { cachedScriptPath, installedAgentInstallScript, resolveInstallScript, runBootstrap } from './bootstrap-runner'
+import {
+  cachedScriptPath,
+  DEFAULT_REPOSITORY,
+  installedAgentInstallScript,
+  rawInstallScriptUrl,
+  repositoryFromInstallStamp,
+  resolveInstallScript,
+  runBootstrap
+} from './bootstrap-runner'
 
 const SCRIPT_NAME = process.platform === 'win32' ? 'install.ps1' : 'install.sh'
 
 function mkTmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-test-'))
 }
+
+test('install-script source follows the stamped fork while hermes CLI naming stays unrelated', () => {
+  const commit = 'a'.repeat(40)
+  assert.equal(repositoryFromInstallStamp({ repository: 'nevernotbad/HermesAgentLab' }), DEFAULT_REPOSITORY)
+  assert.equal(repositoryFromInstallStamp({ repository: 'invalid slug' }), DEFAULT_REPOSITORY)
+  assert.equal(
+    rawInstallScriptUrl(DEFAULT_REPOSITORY, commit, 'install.ps1'),
+    `https://raw.githubusercontent.com/nevernotbad/HermesAgentLab/${commit}/scripts/install.ps1`
+  )
+})
 
 test('runBootstrap bails immediately when the signal is already aborted', async () => {
   const controller = new AbortController()
@@ -79,6 +97,19 @@ test('resolveInstallScript prefers a cached script without touching the network'
   }
 })
 
+test('resolveInstallScript isolates cached scripts by repository', async () => {
+  const home = mkTmpHome()
+
+  try {
+    const commit = 'b'.repeat(40)
+    const forkCache = cachedScriptPath(home, commit, 'nevernotbad/HermesAgentLab')
+    const upstreamCache = cachedScriptPath(home, commit, 'NousResearch/hermes-agent')
+    assert.notEqual(forkCache, upstreamCache)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('resolveInstallScript falls back to the installed agent checkout on a 404', async () => {
   const home = mkTmpHome()
 
@@ -138,3 +169,6 @@ test('resolveInstallScript rethrows when the 404 fallback is unavailable', async
     fs.rmSync(home, { recursive: true, force: true })
   }
 })
+
+
+

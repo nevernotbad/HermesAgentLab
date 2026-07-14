@@ -94,6 +94,12 @@ import {
 import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle } from './link-title-window'
 import { serializeJsonBody, setJsonRequestHeaders } from './oauth-net-request'
 import {
+  applyPortableEnvironment,
+  portableUpdateStatus,
+  resolvePortableMode,
+  shouldRegisterDeepLinkProtocol
+} from './portable-mode'
+import {
   buildSessionWindowUrl,
   chatWindowWebPreferences,
   createSessionWindowRegistry,
@@ -126,12 +132,35 @@ import { readWindowsUserEnvVar } from './windows-user-env'
 import { isPackagedInstallPath as isPackagedInstallPathUnderRoots } from './workspace-cwd'
 import { readWslWindowsClipboardImage } from './wsl-clipboard-image'
 
-const USER_DATA_OVERRIDE = process.env.HERMES_DESKTOP_USER_DATA_DIR
+const PORTABLE_MODE = resolvePortableMode()
+
+applyPortableEnvironment(PORTABLE_MODE)
+
+const USER_DATA_OVERRIDE = process.env.HERMES_DESKTOP_USER_DATA_DIR ||
+  (PORTABLE_MODE.enabled ? PORTABLE_MODE.userDataDir : undefined)
 
 if (USER_DATA_OVERRIDE) {
   const resolvedUserData = path.resolve(USER_DATA_OVERRIDE)
   fs.mkdirSync(resolvedUserData, { recursive: true })
   app.setPath('userData', resolvedUserData)
+}
+
+const PORTABLE_PROBE_PATH = process.env.HERMES_DESKTOP_PORTABLE_PROBE?.trim()
+
+if (PORTABLE_MODE.enabled && PORTABLE_PROBE_PATH && path.isAbsolute(PORTABLE_PROBE_PATH)) {
+  fs.mkdirSync(path.dirname(PORTABLE_PROBE_PATH), { recursive: true })
+  fs.writeFileSync(
+    PORTABLE_PROBE_PATH,
+    JSON.stringify({
+      enabled: true,
+      executableDir: PORTABLE_MODE.executableDir,
+      dataDir: PORTABLE_MODE.dataDir,
+      hermesHome: process.env.HERMES_HOME,
+      userDataDir: app.getPath('userData'),
+      registerDeepLinkProtocol: shouldRegisterDeepLinkProtocol(PORTABLE_MODE)
+    })
+  )
+  app.exit(0)
 }
 
 const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
@@ -8094,6 +8123,7 @@ ipcMain.handle('hermes:terminal:resize', (_event, id, size = {}) => {
 ipcMain.handle('hermes:terminal:dispose', (_event, id) => disposeTerminalSession(String(id || '')))
 
 ipcMain.handle('hermes:updates:check', async () =>
+  portableUpdateStatus(PORTABLE_MODE) ||
   checkUpdates().catch(error => ({
     supported: true,
     branch: readDesktopUpdateConfig().branch,
@@ -8516,7 +8546,9 @@ app.whenReady().then(() => {
   installMediaPermissions()
   registerMediaProtocol()
   installEmbedReferer()
-  registerDeepLinkProtocol()
+  if (shouldRegisterDeepLinkProtocol(PORTABLE_MODE)) {
+    registerDeepLinkProtocol()
+  }
   ensureWslWindowsFonts()
   configureSpellChecker()
   registerPowerResumeListeners()
