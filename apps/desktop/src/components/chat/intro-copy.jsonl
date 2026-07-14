@@ -19,6 +19,8 @@
 {"personality":"creative","headline":"New file, new possibilities","body":"Bring an intent, not a spec. We can prototype fast, refine later, and rewrite the world in the margins."}
 {"personality":"creative","headline":"The muse is patched in","body":"Tell me what you're chasing. I'll remix examples, adapt snippets, and leave a tidy commit behind."}
 {"personality":"teacher","headline":"Production practice mode","body":"Ask about any file or concept. I will explain the reason behind each step while we make the project work."}
+{"personality":"teacher","headline":"Internship lab is open","body":"Bring today's course task, a build log, or a confusing model diagram. I will turn it into runnable steps and notes you can review."}
+{"personality":"teacher","headline":"Let's make the homework clearer","body":"Share the requirement, source file, or screenshot. I will connect the code, result, analysis, and submission package."}
 {"personality":"teacher","headline":"What shall we learn today?","body":"Paste code to review, a bug to debug, or a concept to unpack. I'll guide you step by step."}
 {"personality":"teacher","headline":"Ready to walk you through it","body":"Share the problem. I'll break it into parts, explain each, and leave you able to solve the next one alone."}
 {"personality":"teacher","headline":"Bring me a question","body":"We'll read the code together, find the root cause, and build a mental model you can reuse next time."}
@@ -69,6 +71,7 @@
 {"personality":"hype","headline":"ABSOLUTELY DIALED IN","body":"Describe the task. I'll blitz through files, crush failing tests, and leave a commit that SLAPS. Go go go."}
 {"personality":"hype","headline":"Ready. So ready. Too ready.","body":"Tiny typo or huge refactor - doesn't matter. I'm shipping clean code today. Name the task and let's WORK."}
 {"personality":"none","headline":"Hermes Agent Lab is ready.","body":"Ask a question, paste an error, or point me at a repo. I can read code, run tools, and help you finish the submission."}
+{"personality":"none","headline":"Hermes Agent Lab is ready.","body":"Open a project, check GitHub sync, package the desktop app, or organize a course report. I will keep secrets out and evidence in."}
 {"personality":"none","headline":"What are we building today?","body":"Describe the task in your own words. I'll pick the right tools, explain my plan, and check in before risky steps."}
 {"personality":"none","headline":"Start anywhere.","body":"Drop a file path, a traceback, or a rough idea. I'll investigate, suggest next steps, and keep things reversible."}
 {"personality":"none","headline":"Your workspace, one prompt away.","body":"Search the repo, edit files, run tests, open PRs. Tell me the goal and I'll handle the mechanical parts."}
