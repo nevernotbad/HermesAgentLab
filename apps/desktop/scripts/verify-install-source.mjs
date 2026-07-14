@@ -6,6 +6,8 @@ import { normalizeGitHubRepository, rawInstallScriptUrl, validateRemoteInstallSc
 
 const DESKTOP_ROOT = path.resolve(import.meta.dirname, '..')
 const REPO_ROOT = path.resolve(DESKTOP_ROOT, '..', '..')
+const FETCH_TIMEOUT_MS = Number.parseInt(process.env.HERMES_VERIFY_INSTALL_TIMEOUT_MS || '120000', 10)
+const FETCH_ATTEMPTS = Number.parseInt(process.env.HERMES_VERIFY_INSTALL_ATTEMPTS || '6', 10)
 
 function git(args) {
   return execFileSync('git', args, {
@@ -19,7 +21,7 @@ function downloadTextOnce(url, redirectsLeft = 2) {
   return new Promise((resolve, reject) => {
     const request = https.get(
       url,
-      { headers: { 'User-Agent': 'HermesAgentLab-release-preflight/1' }, timeout: 60_000 },
+      { headers: { 'User-Agent': 'HermesAgentLab-release-preflight/1' }, timeout: FETCH_TIMEOUT_MS },
       response => {
         if ([301, 302, 307, 308].includes(response.statusCode) && response.headers.location && redirectsLeft > 0) {
           response.resume()
@@ -47,7 +49,7 @@ function downloadTextOnce(url, redirectsLeft = 2) {
   })
 }
 
-async function downloadText(url, attempts = 3) {
+async function downloadText(url, attempts = FETCH_ATTEMPTS) {
   let lastError
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -73,14 +75,12 @@ async function main() {
 
   if (!repository) throw new Error('could not resolve GitHub owner/repo from origin')
 
-  await Promise.all(
-    ['install.ps1', 'install.sh'].map(async scriptName => {
-      const url = rawInstallScriptUrl(repository, commit, scriptName)
-      const source = await downloadText(url)
-      validateRemoteInstallScript(scriptName, source, repository)
-      console.log(`[verify-install-source] ${scriptName}: ${url} (${source.length} bytes)`)
-    })
-  )
+  for (const scriptName of ['install.ps1', 'install.sh']) {
+    const url = rawInstallScriptUrl(repository, commit, scriptName)
+    const source = await downloadText(url)
+    validateRemoteInstallScript(scriptName, source, repository)
+    console.log(`[verify-install-source] ${scriptName}: ${url} (${source.length} bytes)`)
+  }
   console.log(`[verify-install-source] OK: ${repository}@${commit.slice(0, 12)}`)
 }
 
