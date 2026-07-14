@@ -21,9 +21,9 @@
     "audit:fix:root": "npm audit fix --workspaces=false",
     "audit:fix:web": "npm audit fix --workspace web",
     "audit:fix:tui": "npm audit fix --workspace ui-tui",
-    "desktop:check": "npm run typecheck --workspace apps/desktop && npm run test:desktop:platforms --workspace apps/desktop && npm run test:packaging --workspace apps/desktop",
-    "desktop:package:win": "npm run desktop:check && npm run verify:install-source --workspace apps/desktop && cross-env HERMES_REQUIRE_CLEAN_BUILD=1 npm run dist:win:nsis --workspace apps/desktop && npm run test:desktop:install:win --workspace apps/desktop",
-    "desktop:package:portable:win": "npm run desktop:check && npm run verify:install-source --workspace apps/desktop && cross-env HERMES_REQUIRE_CLEAN_BUILD=1 npm run dist:win:portable --workspace apps/desktop && npm run test:desktop:portable:win --workspace apps/desktop"
+    "desktop:check": "npm run typecheck --workspace apps/desktop && npm run test:desktop:platforms --workspace apps/desktop && npm run test:ui:packaging --workspace apps/desktop && npm run test:packaging --workspace apps/desktop",
+    "desktop:package:win": "npm run desktop:check && npm run verify:install-source --workspace apps/desktop && cross-env HERMES_REQUIRE_CLEAN_BUILD=1 npm run dist:win:nsis --workspace apps/desktop && npm run test:desktop:bundle --workspace apps/desktop && npm run test:desktop:install:win --workspace apps/desktop",
+    "desktop:package:portable:win": "npm run desktop:check && npm run verify:install-source --workspace apps/desktop && cross-env HERMES_REQUIRE_CLEAN_BUILD=1 npm run dist:win:portable --workspace apps/desktop && npm run test:desktop:app-bundle --workspace apps/desktop && npm run test:desktop:portable:win --workspace apps/desktop"
   },
   "repository": {
     "type": "git",

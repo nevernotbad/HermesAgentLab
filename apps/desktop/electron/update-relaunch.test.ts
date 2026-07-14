@@ -36,8 +36,17 @@ import {
   unpackedDirName
 } from './update-relaunch'
 
+function bashPath(file: string): string {
+  if (process.platform !== 'win32') return file
+
+  const match = /^([A-Za-z]):\\(.*)$/.exec(file)
+  if (!match) return file.replaceAll('\\', '/')
+
+  return `/mnt/${match[1].toLowerCase()}/${match[2].replaceAll('\\', '/')}`
+}
+
 const ROOT = '/home/u/.hermes/hermes-agent'
-const UNPACKED = path.join(ROOT, 'apps', 'desktop', 'release', 'linux-unpacked')
+const UNPACKED = path.posix.join(ROOT, 'apps', 'desktop', 'release', 'linux-unpacked')
 
 // ---------------------------------------------------------------------------
 // 1) The execPath split — the heart of the GUI/backend skew guard.
@@ -49,10 +58,18 @@ test('unpackedDirName maps platform to the electron-builder dir', () => {
 })
 
 test('resolveUnpackedRelease returns the dir for a binary UNDER release/<plat>-unpacked', () => {
-  const exec = path.join(UNPACKED, 'hermes')
+  const exec = path.posix.join(UNPACKED, 'hermes')
   assert.equal(resolveUnpackedRelease(exec, ROOT, 'linux'), UNPACKED)
   // The unpacked dir itself also counts.
   assert.equal(resolveUnpackedRelease(UNPACKED, ROOT, 'linux'), UNPACKED)
+})
+
+test('resolveUnpackedRelease uses target-platform path semantics', () => {
+  const root = 'C:\\Users\\student\\.hermes\\hermes-agent'
+  const unpacked = path.win32.join(root, 'apps', 'desktop', 'release', 'win-unpacked')
+  const exec = path.win32.join(unpacked, 'Hermes.exe')
+
+  assert.equal(resolveUnpackedRelease(exec, root, 'win32'), unpacked)
 })
 
 test('resolveUnpackedRelease is null for AppImage / .deb / .rpm / dev / unresolved paths', () => {
@@ -212,7 +229,7 @@ test('buildRelaunchScript embeds pid/exec/args/env/cwd and is valid bash', () =>
   fs.writeFileSync(tmp, script)
 
   try {
-    execFileSync('bash', ['-n', tmp], { stdio: 'pipe' })
+    execFileSync('bash', ['-n', bashPath(tmp)], { stdio: 'pipe' })
   } finally {
     fs.rmSync(tmp, { force: true })
   }
@@ -231,7 +248,7 @@ test('buildRelaunchScript with no args/env still lints clean', () => {
   fs.writeFileSync(tmp, script)
 
   try {
-    execFileSync('bash', ['-n', tmp], { stdio: 'pipe' })
+    execFileSync('bash', ['-n', bashPath(tmp)], { stdio: 'pipe' })
   } finally {
     fs.rmSync(tmp, { force: true })
   }
